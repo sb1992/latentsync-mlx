@@ -23,6 +23,32 @@ from .vae import Autoencoder
 from .sampler import DDIMSampler
 
 
+def get_system_ram_gb() -> int:
+    """Return total physical RAM in GB."""
+    import platform
+    if platform.system() == "Darwin":
+        result = subprocess.run(
+            ["sysctl", "-n", "hw.memsize"], capture_output=True, text=True
+        )
+        return int(result.stdout.strip()) // (1024 ** 3)
+    mem_bytes = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+    return mem_bytes // (1024 ** 3)
+
+
+def compute_cache_limit_bytes(ram_gb: int = None, override_gb: float = None) -> int:
+    """Compute optimal MLX cache limit based on system RAM.
+
+    Strategy: reserve 12 GB for OS/apps, use 40% of remainder as buffer cache,
+    capped at 8 GB (diminishing returns beyond that).
+    """
+    if override_gb is not None:
+        return int(override_gb * 1024 ** 3)
+    if ram_gb is None:
+        ram_gb = get_system_ram_gb()
+    cache_gb = min(8.0, max(0, (ram_gb - 12) * 0.4))
+    return int(cache_gb * 1024 ** 3)
+
+
 def write_video_frames(path: str, frames: np.ndarray, fps: int = 25):
     h, w = frames.shape[1:3]
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
@@ -44,6 +70,7 @@ class LipsyncPipelineMLX:
         image_processor,
         resolution: int = 256,
         dtype=None,
+        cache_limit_gb: float = None,
     ):
         self.unet = unet
         self.vae = vae
@@ -53,6 +80,7 @@ class LipsyncPipelineMLX:
         self.resolution = resolution
         self.vae_scale_factor = 8
         self.dtype = dtype or mx.float32
+        self._cache_limit_bytes = compute_cache_limit_bytes(override_gb=cache_limit_gb)
 
     def _affine_transform_video(self, video_frames):
         faces, boxes, affine_matrices = [], [], []
@@ -138,6 +166,9 @@ class LipsyncPipelineMLX:
         print("Freed face detector.")
 
         # --- Stage 3: MLX denoising ---
+        mx.set_cache_limit(self._cache_limit_bytes)
+        cache_gb = self._cache_limit_bytes / (1024 ** 3)
+        print(f"MLX cache limit: {cache_gb:.1f} GB (system RAM: {get_system_ram_gb()} GB)")
         print(f"Running MLX denoising ({num_inference_steps} steps, {len(whisper_chunks)} frames)...")
 
         mx.random.seed(seed)
@@ -234,6 +265,7 @@ class LipsyncPipelineMLX:
             inv_mask = 1.0 - masks_mlx  # 1 in mouth region
             combined = decoded[:F_count] * inv_mask + ref_pv_mlx * masks_mlx
             synced_frames_list.append(combined)
+            mx.clear_cache()
 
         del self.unet
         self.unet = None

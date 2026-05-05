@@ -39,8 +39,11 @@ def main():
     parser.add_argument("--inference_steps", type=int, default=20)
     parser.add_argument("--guidance_scale", type=float, default=1.5)
     parser.add_argument("--seed", type=int, default=1247)
+    parser.add_argument("--num_frames", type=int, default=16, help="Frames per chunk (16 or 8)")
     parser.add_argument("--temp_dir", type=str, default="temp_mlx")
     parser.add_argument("--no-float16", action="store_true", help="Disable float16 (use float32)")
+    parser.add_argument("--cache-gb", type=float, default=None,
+                        help="MLX cache limit in GB (auto-detected from system RAM if omitted)")
     args = parser.parse_args()
 
     device = "mps" if torch.backends.mps.is_available() else "cpu"
@@ -91,6 +94,7 @@ def main():
         image_processor=image_processor,
         resolution=args.resolution,
         dtype=dtype,
+        cache_limit_gb=args.cache_gb,
     )
 
     # --- Run ---
@@ -98,6 +102,7 @@ def main():
         video_path=args.video_path,
         audio_path=args.audio_path,
         video_out_path=args.video_out_path,
+        num_frames=args.num_frames,
         num_inference_steps=args.inference_steps,
         guidance_scale=args.guidance_scale,
         seed=args.seed,
