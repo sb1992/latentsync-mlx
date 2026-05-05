@@ -40,15 +40,18 @@ def main():
     parser.add_argument("--guidance_scale", type=float, default=1.5)
     parser.add_argument("--seed", type=int, default=1247)
     parser.add_argument("--temp_dir", type=str, default="temp_mlx")
+    parser.add_argument("--no-float16", action="store_true", help="Disable float16 (use float32)")
     args = parser.parse_args()
 
     device = "mps" if torch.backends.mps.is_available() else "cpu"
-    print(f"Resolution: {args.resolution}px | Device (preprocessing): {device}")
+    dtype = mx.float32 if args.no_float16 else mx.float16
+    print(f"Resolution: {args.resolution}px | Device (preprocessing): {device} | Precision: {dtype}")
 
     # --- Load MLX UNet ---
     print("Loading MLX UNet...")
     unet = UNet3DConditionModel()
     weights = mx.load(args.unet_weights)
+    weights = {k: v.astype(dtype) for k, v in weights.items()}
     unet.load_weights(list(weights.items()))
     mx.eval(unet.parameters())
 
@@ -56,6 +59,7 @@ def main():
     print("Loading MLX VAE...")
     vae = Autoencoder()
     vae_weights = mx.load(args.vae_weights)
+    vae_weights = {k: v.astype(dtype) for k, v in vae_weights.items()}
     vae.load_weights(list(vae_weights.items()))
     mx.eval(vae.parameters())
 
@@ -86,6 +90,7 @@ def main():
         audio_encoder=audio_encoder,
         image_processor=image_processor,
         resolution=args.resolution,
+        dtype=dtype,
     )
 
     # --- Run ---
