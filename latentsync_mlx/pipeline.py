@@ -4,6 +4,7 @@ Face detection and Whisper audio encoding stay in PyTorch/ONNX (not hot path).
 The UNet denoising loop and VAE decode run in MLX (hot path).
 """
 
+import gc
 import os
 import math
 import shutil
@@ -114,12 +115,27 @@ class LipsyncPipelineMLX:
         )
         audio_samples = read_audio(audio_path)
 
+        del self.audio_encoder
+        self.audio_encoder = None
+        gc.collect()
+        if torch.backends.mps.is_available():
+            torch.mps.empty_cache()
+        print("Freed audio encoder.")
+
         # --- Stage 2: Video/face processing (PyTorch/ONNX) ---
         print("Processing video frames...")
         video_frames = read_video(video_path, use_decord=False)
         video_frames, faces, boxes, affine_matrices = self._loop_video(
             whisper_chunks, video_frames
         )
+
+        if hasattr(self.image_processor, 'face_detector'):
+            del self.image_processor.face_detector
+            self.image_processor.face_detector = None
+        gc.collect()
+        if torch.backends.mps.is_available():
+            torch.mps.empty_cache()
+        print("Freed face detector.")
 
         # --- Stage 3: MLX denoising ---
         print(f"Running MLX denoising ({num_inference_steps} steps, {len(whisper_chunks)} frames)...")
@@ -219,6 +235,12 @@ class LipsyncPipelineMLX:
             combined = decoded[:F_count] * inv_mask + ref_pv_mlx * masks_mlx
             synced_frames_list.append(combined)
 
+        del self.unet
+        self.unet = None
+        gc.collect()
+        mx.clear_cache()
+        print("Freed UNet and cleared MLX cache.")
+
         # --- Stage 4: Restore faces to original frames ---
         print("Restoring faces to video...")
         all_synced = mx.concatenate(synced_frames_list, axis=0)  # (total_F, H, W, C) in [-1,1]
@@ -226,6 +248,12 @@ class LipsyncPipelineMLX:
         # Convert to PyTorch (C, H, W) for restore_img
         all_synced_np = np.array(all_synced.astype(mx.float32))  # NHWC, ensure float32 for torch
         all_synced_torch = torch.from_numpy(all_synced_np).permute(0, 3, 1, 2)  # NCHW
+
+        del self.vae
+        self.vae = None
+        gc.collect()
+        mx.clear_cache()
+        print("Freed VAE and cleared MLX cache.")
 
         restored = self._restore_video(
             all_synced_torch, video_frames, boxes, affine_matrices
