@@ -91,6 +91,9 @@ PYTHONPATH=. python scripts/inference.py \
 | `--inference_steps` | 20 | DDIM denoising steps |
 | `--guidance_scale` | 1.5 | Classifier-free guidance scale |
 | `--seed` | 1247 | Random seed |
+| `--num_frames` | 16 | Frames per denoising chunk (lower = less memory) |
+| `--cache-gb` | auto | MLX buffer cache limit (auto-detected from system RAM) |
+| `--no-float16` | off | Use float32 instead of float16 |
 | `--unet_weights` | `checkpoints/latentsync_unet_mlx.safetensors` | MLX UNet weights |
 | `--vae_weights` | `checkpoints/vae_mlx.safetensors` | MLX VAE weights |
 
@@ -112,6 +115,31 @@ PSNR > 37 dB across all frames — differences are floating-point precision, not
 |---------|------------------------|----------|
 | PyTorch MPS | ~32s | 1.0x |
 | MLX | ~14s | **2.3x faster** |
+
+### Memory optimization
+
+The pipeline auto-detects system RAM and configures the MLX buffer cache to balance speed vs. memory usage. Override with `--cache-gb`:
+
+```bash
+# Force 2 GB cache (conservative, for loaded 16 GB machines)
+PYTHONPATH=. python scripts/inference.py --cache-gb 2 ...
+
+# Force 0 cache (minimum memory footprint, slower)
+PYTHONPATH=. python scripts/inference.py --cache-gb 0 ...
+```
+
+| System RAM | Auto Cache | Peak Memory (v1.5, 256px) | Speed |
+|---|---|---|---|
+| 8 GB | 0 GB | ~10.5 GB | ~21s/chunk |
+| 16 GB | 1.6 GB | ~15 GB | ~19s/chunk |
+| 24 GB | 4.8 GB | ~18 GB | ~18s/chunk |
+| 32+ GB | 8 GB | ~22 GB | ~14s/chunk |
+
+The pipeline also:
+- Frees the Whisper encoder and face detector after preprocessing
+- Clears the MLX buffer cache between denoising chunks
+- Frees the UNet and VAE after inference before face restoration
+- Slices VAE encode/decode to reduce per-frame peak memory
 
 ## File structure
 
