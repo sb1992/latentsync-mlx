@@ -253,15 +253,25 @@ class LipsyncPipelineMLX:
         subprocess.run(cmd, shell=True)
         print(f"Output saved to: {video_out_path}")
 
-    def _vae_encode(self, images):
-        """Encode NHWC images to latents."""
-        mean, _ = self.vae.encode(images)
-        return (mean - self.vae.shift_factor) * self.vae.scaling_factor
+    def _vae_encode(self, images, batch_size=1):
+        """Encode NHWC images to latents, sliced to reduce peak memory."""
+        latents = []
+        for i in range(0, images.shape[0], batch_size):
+            batch = images[i:i + batch_size]
+            mean, _ = self.vae.encode(batch)
+            latents.append((mean - self.vae.shift_factor) * self.vae.scaling_factor)
+            mx.eval(latents[-1])
+        return mx.concatenate(latents, axis=0)
 
-    def _vae_decode(self, latents):
-        """Decode latents to NHWC images."""
-        latents = latents / self.vae.scaling_factor + self.vae.shift_factor
-        return self.vae.decode(latents)
+    def _vae_decode(self, latents, batch_size=1):
+        """Decode latents to NHWC images, sliced to reduce peak memory."""
+        scaled = latents / self.vae.scaling_factor + self.vae.shift_factor
+        decoded = []
+        for i in range(0, scaled.shape[0], batch_size):
+            batch = scaled[i:i + batch_size]
+            decoded.append(self.vae.decode(batch))
+            mx.eval(decoded[-1])
+        return mx.concatenate(decoded, axis=0)
 
     def _restore_video(self, faces_torch, video_frames, boxes, affine_matrices):
         """Restore synced faces back into original video frames."""
