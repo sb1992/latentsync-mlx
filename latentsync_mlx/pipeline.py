@@ -42,6 +42,7 @@ class LipsyncPipelineMLX:
         audio_encoder,
         image_processor,
         resolution: int = 256,
+        dtype=None,
     ):
         self.unet = unet
         self.vae = vae
@@ -50,6 +51,7 @@ class LipsyncPipelineMLX:
         self.image_processor = image_processor
         self.resolution = resolution
         self.vae_scale_factor = 8
+        self.dtype = dtype or mx.float32
 
     def _affine_transform_video(self, video_frames):
         faces, boxes, affine_matrices = [], [], []
@@ -131,7 +133,7 @@ class LipsyncPipelineMLX:
         latent_w = self.resolution // self.vae_scale_factor
 
         # Same noise for all frames, matching PyTorch: randn(1,4,1,h,w).repeat(1,1,F,1,1)
-        single_noise = mx.random.normal((1, 1, latent_h, latent_w, 4))
+        single_noise = mx.random.normal((1, 1, latent_h, latent_w, 4)).astype(self.dtype)
         noise_shape = (1, len(whisper_chunks), latent_h, latent_w, 4)
         all_latents = mx.broadcast_to(single_noise, noise_shape) * self.sampler.init_noise_sigma
 
@@ -149,9 +151,9 @@ class LipsyncPipelineMLX:
             # ref_pv: (F, C, H, W) [-1,1], masked_pv: (F, C, H, W) [-1,1], masks_pt: (F, 1, H, W) [0,1]
 
             # Convert to MLX NHWC
-            ref_pv_mlx = mx.array(ref_pv.numpy().transpose(0, 2, 3, 1).astype(np.float32))
-            masked_pv_mlx = mx.array(masked_pv.numpy().transpose(0, 2, 3, 1).astype(np.float32))
-            masks_mlx = mx.array(masks_pt.numpy().transpose(0, 2, 3, 1).astype(np.float32))
+            ref_pv_mlx = mx.array(ref_pv.numpy().transpose(0, 2, 3, 1)).astype(self.dtype)
+            masked_pv_mlx = mx.array(masked_pv.numpy().transpose(0, 2, 3, 1)).astype(self.dtype)
+            masks_mlx = mx.array(masks_pt.numpy().transpose(0, 2, 3, 1)).astype(self.dtype)
 
             # VAE encode
             masked_latents = self._vae_encode(masked_pv_mlx)  # (F, h, w, 4)
@@ -163,7 +165,7 @@ class LipsyncPipelineMLX:
             mask_resized = torch.nn.functional.interpolate(
                 masks_pt, size=(latent_h, latent_w)
             ).numpy().transpose(0, 2, 3, 1)  # (F, h, w, 1)
-            mask_latents = mx.array(mask_resized.astype(np.float32))
+            mask_latents = mx.array(mask_resized).astype(self.dtype)
 
             # Add batch dim: (F,...) → (1,F,...)
             masked_latents = masked_latents[None]
@@ -178,7 +180,7 @@ class LipsyncPipelineMLX:
 
             # Audio embeddings
             audio_embeds = torch.stack(whisper_chunks[start:end])
-            audio_embeds_mlx = mx.array(audio_embeds.float().numpy())
+            audio_embeds_mlx = mx.array(audio_embeds.float().numpy()).astype(self.dtype)
             audio_embeds_mlx = audio_embeds_mlx[None]  # (1, F, S, 384)
             if do_cfg:
                 null_audio = mx.zeros_like(audio_embeds_mlx)
@@ -222,7 +224,7 @@ class LipsyncPipelineMLX:
         all_synced = mx.concatenate(synced_frames_list, axis=0)  # (total_F, H, W, C) in [-1,1]
 
         # Convert to PyTorch (C, H, W) for restore_img
-        all_synced_np = np.array(all_synced)  # NHWC
+        all_synced_np = np.array(all_synced.astype(mx.float32))  # NHWC, ensure float32 for torch
         all_synced_torch = torch.from_numpy(all_synced_np).permute(0, 3, 1, 2)  # NCHW
 
         restored = self._restore_video(

@@ -25,3 +25,4 @@ temp/
 .idea/
 *.swp
 .DS_Store
+outputs/
