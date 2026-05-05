@@ -1,0 +1,8 @@
+mlx>=0.31.0
+numpy
+opencv-python
+torch
+torchvision
+tqdm
+einops
+soundfile

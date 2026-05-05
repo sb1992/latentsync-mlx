@@ -1,0 +1,27 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# Weights (too large for git — download or convert locally)
+checkpoints/
+*.safetensors
+*.pt
+*.pth
+*.ckpt
+
+# Temp files
+temp_mlx/
+temp/
+*.mp4
+*.wav
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
